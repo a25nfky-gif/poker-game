@@ -1,0 +1,831 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>インディアンポーカー (Indian Poker)</title>
+    <style>
+        :root {
+            --bg-color: #0b1f15;
+            --table-color: #1a472a;
+            --table-border: #2d6a4f;
+            --gold: #d4af37;
+            --gold-hover: #f3c623;
+            --card-bg: #ffffff;
+            --text-main: #f8f9fa;
+            --panel-bg: rgba(15, 23, 42, 0.85);
+            --danger: #e63946;
+            --success: #2a9d8f;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            user-select: none;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px 10px;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 15px;
+        }
+
+        h1 {
+            color: var(--gold);
+            font-size: 2rem;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+            letter-spacing: 2px;
+        }
+
+        .rule-summary {
+            font-size: 0.9rem;
+            color: #a0aec0;
+            margin-top: 5px;
+        }
+
+        .game-container {
+            width: 100%;
+            max-width: 1000px;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        /* 招待 & ルームエリア */
+        .room-bar {
+            background: var(--panel-bg);
+            border: 1px solid var(--gold);
+            border-radius: 12px;
+            padding: 12px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+
+        .room-info {
+            font-weight: bold;
+            color: var(--gold);
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .badge-host {
+            background: var(--gold);
+            color: #000;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            font-weight: bold;
+        }
+
+        .room-actions {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .mode-selector {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 15px;
+            flex-wrap: wrap;
+            background: var(--panel-bg);
+            padding: 12px;
+            border-radius: 12px;
+            border: 1px solid rgba(212, 175, 55, 0.3);
+        }
+
+        .player-count-picker {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: var(--gold);
+            font-weight: bold;
+            font-size: 0.9rem;
+        }
+
+        .player-count-picker input[type="range"] {
+            cursor: pointer;
+            accent-color: var(--gold);
+        }
+
+        .btn {
+            background: linear-gradient(135deg, var(--gold), #aa8529);
+            color: #000;
+            border: none;
+            padding: 10px 18px;
+            font-weight: bold;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            font-size: 0.9rem;
+        }
+
+        .btn:hover:not(:disabled) {
+            background: linear-gradient(135deg, var(--gold-hover), var(--gold));
+            transform: translateY(-2px);
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .btn-secondary {
+            background: #4a5568;
+            color: #fff;
+        }
+        .btn-secondary:hover:not(:disabled) {
+            background: #718096;
+        }
+
+        .btn-success {
+            background: linear-gradient(135deg, #2a9d8f, #1d7066);
+            color: #fff;
+        }
+
+        .btn-danger {
+            background: var(--danger);
+            color: #fff;
+        }
+
+        /* ポーカーテーブル */
+        .table {
+            background: radial-gradient(circle, var(--table-color) 0%, var(--bg-color) 100%);
+            border: 8px solid var(--table-border);
+            border-radius: 60px;
+            padding: 25px 15px;
+            position: relative;
+            min-height: 440px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            box-shadow: inset 0 0 50px rgba(0,0,0,0.8), 0 10px 25px rgba(0,0,0,0.5);
+        }
+
+        .opponents-zone {
+            display: flex;
+            justify-content: center;
+            flex-wrap: wrap;
+            gap: 12px;
+            max-height: 280px;
+            overflow-y: auto;
+            padding: 5px;
+        }
+
+        .player-card-box {
+            background: var(--panel-bg);
+            border: 2px solid rgba(212, 175, 55, 0.3);
+            border-radius: 10px;
+            padding: 8px;
+            width: 110px;
+            text-align: center;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            position: relative;
+            backdrop-filter: blur(5px);
+            transition: transform 0.2s ease;
+        }
+
+        .player-card-box.is-me {
+            border-color: var(--gold);
+            box-shadow: 0 0 15px rgba(212, 175, 55, 0.4);
+        }
+
+        .player-card-box.is-loser {
+            border-color: var(--danger);
+            animation: shake 0.5s;
+        }
+
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            25% { transform: translateX(-5px); }
+            75% { transform: translateX(5px); }
+        }
+
+        .player-header {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 4px;
+            margin-bottom: 4px;
+            width: 100%;
+        }
+
+        .player-name {
+            font-size: 0.8rem;
+            font-weight: bold;
+            color: #e2e8f0;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 80px;
+        }
+
+        .edit-name-btn {
+            background: none;
+            border: none;
+            color: var(--gold);
+            cursor: pointer;
+            font-size: 0.75rem;
+            padding: 1px;
+        }
+
+        /* トランプカード */
+        .card {
+            width: 55px;
+            height: 80px;
+            background-color: var(--card-bg);
+            border-radius: 6px;
+            border: 1px solid #ccc;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            padding: 4px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.4);
+            position: relative;
+            font-weight: bold;
+        }
+
+        .card.red { color: #d90429; }
+        .card.black { color: #212529; }
+
+        .card-corner {
+            font-size: 0.9rem;
+            line-height: 1;
+        }
+
+        .card-center {
+            font-size: 1.5rem;
+            text-align: center;
+            align-self: center;
+        }
+
+        .card-back {
+            background: linear-gradient(135deg, #1e3a8a 25%, #1e40af 25%, #1e40af 50%, #1e3a8a 50%, #1e3a8a 75%, #1e40af 75%, #1e40af 100%);
+            background-size: 16px 16px;
+            border: 2px solid #fff;
+        }
+
+        .redraw-count {
+            margin-top: 4px;
+            font-size: 0.7rem;
+            color: #cbd5e1;
+        }
+
+        .center-zone {
+            text-align: center;
+            margin: 10px 0;
+        }
+
+        .game-count-badge {
+            font-size: 0.85rem;
+            color: #a0aec0;
+            margin-bottom: 3px;
+        }
+
+        .status-message {
+            font-size: 1.1rem;
+            color: var(--gold);
+            font-weight: bold;
+            min-height: 1.6em;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.8);
+        }
+
+        .my-zone {
+            display: flex;
+            justify-content: center;
+        }
+
+        .controls {
+            display: flex;
+            justify-content: center;
+            gap: 12px;
+            margin-top: 10px;
+            flex-wrap: wrap;
+        }
+
+        .log-container {
+            background: var(--panel-bg);
+            border-radius: 12px;
+            padding: 12px 15px;
+            max-height: 130px;
+            overflow-y: auto;
+            border: 1px solid #334155;
+        }
+
+        .log-title {
+            font-size: 0.85rem;
+            color: var(--gold);
+            margin-bottom: 5px;
+        }
+
+        .log-item {
+            font-size: 0.8rem;
+            color: #94a3b8;
+            margin-bottom: 3px;
+        }
+
+        .rules-modal {
+            background: var(--panel-bg);
+            border: 1px solid var(--gold);
+            border-radius: 8px;
+            padding: 12px 15px;
+            font-size: 0.85rem;
+            line-height: 1.4;
+            color: #cbd5e1;
+        }
+
+        .rules-modal h3 {
+            color: var(--gold);
+            margin-bottom: 4px;
+        }
+
+        @media (max-width: 600px) {
+            .table {
+                border-radius: 30px;
+                padding: 15px 8px;
+            }
+            .player-card-box {
+                width: 85px;
+                padding: 5px;
+            }
+            .card {
+                width: 45px;
+                height: 65px;
+            }
+            .card-corner {
+                font-size: 0.75rem;
+            }
+            .card-center {
+                font-size: 1.1rem;
+            }
+            .room-bar {
+                flex-direction: column;
+                align-items: stretch;
+                text-align: center;
+            }
+            .room-actions {
+                justify-content: center;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <h1>INDIAN POKER</h1>
+        <div class="rule-summary">ルール：最弱は <b>A</b> / 最強は <b>K</b> / 引き直し <b>2回まで</b></div>
+    </header>
+
+    <div class="game-container">
+        <!-- ルーム・ホスト管理バー -->
+        <div class="room-bar">
+            <div class="room-info">
+                <span>🏠 ルーム: <b id="roomCodeDisplay">----</b></span>
+                <span id="hostBadge" class="badge-host" style="display: none;">👑 ホスト</span>
+            </div>
+            <div class="room-actions">
+                <button class="btn btn-secondary" onclick="createRoom()">➕ 部屋を作成 (ホストになる)</button>
+                <button class="btn" onclick="copyInviteLink()">🔗 招待リンクをコピー</button>
+            </div>
+        </div>
+
+        <!-- モード切替 & 人数調整 -->
+        <div class="mode-selector">
+            <button class="btn btn-secondary" id="modeAiBtn" onclick="setMode('vs-ai')">🤖 VS AIボット</button>
+            <button class="btn btn-secondary" id="modePassBtn" onclick="setMode('pass-play')">👥 パス＆プレイ (対人)</button>
+            
+            <div class="player-count-picker" id="playerCountContainer" style="display: none;">
+                <label for="playerCountSlider">参加人数:</label>
+                <input type="range" id="playerCountSlider" min="2" max="15" value="3" oninput="updatePlayerCount(this.value)">
+                <span id="playerCountDisplay">3人</span>
+            </div>
+        </div>
+
+        <!-- ルール説明 -->
+        <div class="rules-modal">
+            <h3>📖 ゲームルール</h3>
+            <ul>
+                <li>自分のカードだけが見えず、他の人のカードが見えています。</li>
+                <li>カードの強さ: <b>A (最弱) &lt; 2 &lt; 3 &lt; ... &lt; Q &lt; K (最強)</b></li>
+                <li>各プレイヤーはラウンド中 <b>最大2回まで</b> 引き直せます。</li>
+                <li>対人戦は <b>2人〜15人</b> に対応。最弱カードを持っていた人が負けです。</li>
+            </ul>
+        </div>
+
+        <!-- ポーカーテーブル -->
+        <div class="table">
+            <div class="opponents-zone" id="opponentsZone"></div>
+
+            <div class="center-zone">
+                <div class="game-count-badge" id="gameCountBadge">第 1 ゲーム</div>
+                <div class="status-message" id="statusMessage">ホストが「ゲームを開始」を押すと始まります</div>
+            </div>
+
+            <div class="my-zone" id="myZone"></div>
+        </div>
+
+        <!-- 操作・進行ボタン -->
+        <div class="controls">
+            <!-- ゲーム開始前（ホスト専用） -->
+            <button class="btn btn-success" id="startGameBtn" onclick="startGameRound()">🎮 ゲームを開始（ホスト専用）</button>
+            
+            <!-- プレイ中コントロール -->
+            <button class="btn btn-danger" id="redrawBtn" onclick="handleRedraw()" style="display: none;">🔄 引き直す (残2回)</button>
+            <button class="btn" id="showdownBtn" onclick="handleShowdown()" style="display: none;">⚔️ 勝負する！</button>
+            
+            <!-- ゲーム終了後（連戦ボタン） -->
+            <button class="btn btn-success" id="nextGameBtn" onclick="startNextGame()" style="display: none;">🔄 次のゲームへ（ホスト専用）</button>
+        </div>
+
+        <!-- 履歴ログ -->
+        <div class="log-container">
+            <div class="log-title">📋 対戦履歴</div>
+            <div id="gameLog"></div>
+        </div>
+    </div>
+
+    <script>
+        const SUITS = ['♠', '♥', '♦', '♣'];
+        const RANKS = [
+            { display: 'A', value: 1 },
+            { display: '2', value: 2 },
+            { display: '3', value: 3 },
+            { display: '4', value: 4 },
+            { display: '5', value: 5 },
+            { display: '6', value: 6 },
+            { display: '7', value: 7 },
+            { display: '8', value: 8 },
+            { display: '9', value: 9 },
+            { display: '10', value: 10 },
+            { display: 'J', value: 11 },
+            { display: 'Q', value: 12 },
+            { display: 'K', value: 13 }
+        ];
+
+        let deck = [];
+        let players = [];
+        let gameMode = 'vs-ai';
+        let playerCount = 3; // デフォルト3人
+        let roundState = 'WAITING';
+        let isHost = true;
+        let gameCount = 1;
+        let currentRoom = '';
+        const MAX_REDRAWS = 2;
+
+        function checkUrlRoom() {
+            const params = new URLSearchParams(window.location.search);
+            const room = params.get('room');
+            if (room) {
+                currentRoom = room;
+                isHost = false;
+                document.getElementById('roomCodeDisplay').textContent = `#${room}`;
+                logMessage(`ルーム #${room} に参加しました（ゲスト）。`);
+            } else {
+                createRoom(false);
+            }
+            updateHostStatus();
+        }
+
+        function createRoom(notify = true) {
+            const randomCode = Math.floor(1000 + Math.random() * 9000).toString();
+            currentRoom = randomCode;
+            isHost = true;
+            document.getElementById('roomCodeDisplay').textContent = `#${randomCode}`;
+
+            const newUrl = window.location.pathname + '?room=' + randomCode;
+            window.history.pushState({ path: newUrl }, '', newUrl);
+
+            updateHostStatus();
+
+            if (notify) {
+                logMessage(`あなたがホストとして新しいルーム #${randomCode} を作成しました。`);
+                alert(`新しいルームを作成しました！\nあなたは【ホスト】です。\n「ゲームを開始」ボタンでゲームを開始できます。`);
+            }
+        }
+
+        function updateHostStatus() {
+            const hostBadge = document.getElementById('hostBadge');
+            const startGameBtn = document.getElementById('startGameBtn');
+            const nextGameBtn = document.getElementById('nextGameBtn');
+
+            if (isHost) {
+                hostBadge.style.display = 'inline-block';
+                if (roundState === 'WAITING') startGameBtn.style.display = 'inline-block';
+                if (roundState === 'FINISHED') nextGameBtn.style.display = 'inline-block';
+            } else {
+                hostBadge.style.display = 'none';
+                startGameBtn.style.display = 'none';
+                nextGameBtn.style.display = 'none';
+            }
+        }
+
+        function copyInviteLink() {
+            const url = window.location.href;
+            navigator.clipboard.writeText(url).then(() => {
+                alert(`招待リンクをコピーしました！友達に送信してください:\n${url}`);
+            }).catch(() => {
+                prompt("以下のリンクをコピーして共有してください:", url);
+            });
+        }
+
+        function createDeck() {
+            deck = [];
+            for (let suit of SUITS) {
+                for (let rank of RANKS) {
+                    deck.push({
+                        suit: suit,
+                        display: rank.display,
+                        value: rank.value,
+                        color: (suit === '♥' || suit === '♦') ? 'red' : 'black'
+                    });
+                }
+            }
+            for (let i = deck.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [deck[i], deck[j]] = [deck[j], deck[i]];
+            }
+        }
+
+        function drawCard() {
+            if (deck.length === 0) createDeck();
+            return deck.pop();
+        }
+
+        function setMode(mode) {
+            gameMode = mode;
+            gameCount = 1;
+            roundState = 'WAITING';
+
+            const container = document.getElementById('playerCountContainer');
+            if (mode === 'pass-play') {
+                container.style.display = 'flex';
+            } else {
+                container.style.display = 'none';
+                playerCount = 3;
+            }
+
+            logMessage(`モードを変更しました: ${mode === 'vs-ai' ? 'VS AIボット' : 'パス＆プレイ (' + playerCount + '人)'}`);
+            initGame();
+        }
+
+        function updatePlayerCount(val) {
+            playerCount = parseInt(val);
+            document.getElementById('playerCountDisplay').textContent = `${playerCount}人`;
+            if (gameMode === 'pass-play') {
+                logMessage(`参加人数を ${playerCount} 人に変更しました。`);
+                initGame();
+            }
+        }
+
+        function initGame() {
+            createDeck();
+            players = [];
+
+            if (gameMode === 'vs-ai') {
+                players = [
+                    { id: 0, name: 'あなた', card: null, redrawsLeft: MAX_REDRAWS, isHuman: true },
+                    { id: 1, name: 'AI タロウ', card: null, redrawsLeft: MAX_REDRAWS, isHuman: false },
+                    { id: 2, name: 'AI ハナコ', card: null, redrawsLeft: MAX_REDRAWS, isHuman: false }
+                ];
+            } else {
+                for (let i = 0; i < playerCount; i++) {
+                    players.push({
+                        id: i,
+                        name: i === 0 ? 'あなた' : `プレイヤー ${i + 1}`,
+                        card: null,
+                        redrawsLeft: MAX_REDRAWS,
+                        isHuman: true
+                    });
+                }
+            }
+
+            roundState = 'WAITING';
+            document.getElementById('gameCountBadge').textContent = `第 ${gameCount} ゲーム`;
+            
+            document.getElementById('startGameBtn').style.display = isHost ? 'inline-block' : 'none';
+            document.getElementById('redrawBtn').style.display = 'none';
+            document.getElementById('showdownBtn').style.display = 'none';
+            document.getElementById('nextGameBtn').style.display = 'none';
+
+            updateUI();
+            setStatus(isHost ? "「ゲームを開始」を押してください" : "ホストがゲームを開始するのを待っています...");
+        }
+
+        function renamePlayer(id) {
+            const player = players.find(p => p.id === id);
+            if (!player) return;
+
+            const newName = prompt(`「${player.name}」の新しい名前を入力してください:`, player.name);
+            if (newName && newName.trim() !== '') {
+                const oldName = player.name;
+                player.name = newName.trim();
+                logMessage(`名前を変更しました: ${oldName} ➔ ${player.name}`);
+                updateUI();
+            }
+        }
+
+        function startGameRound() {
+            createDeck();
+            roundState = 'PLAYING';
+
+            players.forEach(p => {
+                p.card = drawCard();
+                p.redrawsLeft = MAX_REDRAWS;
+            });
+
+            document.getElementById('startGameBtn').style.display = 'none';
+            document.getElementById('nextGameBtn').style.display = 'none';
+            document.getElementById('redrawBtn').style.display = 'inline-block';
+            document.getElementById('showdownBtn').style.display = 'inline-block';
+            document.getElementById('showdownBtn').disabled = false;
+
+            updateUI();
+            setStatus(`【第 ${gameCount} ゲーム】他プレイヤー（${players.length - 1}名）のカードを見て推理しましょう！`);
+            logMessage(`--- 第 ${gameCount} ゲームが開始されました（参加数: ${players.length}名） ---`);
+        }
+
+        function startNextGame() {
+            gameCount++;
+            document.getElementById('gameCountBadge').textContent = `第 ${gameCount} ゲーム`;
+            startGameRound();
+        }
+
+        function updateUI() {
+            const opponentsZone = document.getElementById('opponentsZone');
+            const myZone = document.getElementById('myZone');
+            const redrawBtn = document.getElementById('redrawBtn');
+
+            opponentsZone.innerHTML = '';
+            myZone.innerHTML = '';
+
+            const me = players[0];
+
+            redrawBtn.textContent = `🔄 引き直す (残${me.redrawsLeft}回)`;
+            redrawBtn.disabled = (roundState !== 'PLAYING' || me.redrawsLeft <= 0);
+
+            players.forEach((p) => {
+                const box = document.createElement('div');
+                box.className = `player-card-box ${p.id === 0 ? 'is-me' : ''}`;
+                box.id = `player-box-${p.id}`;
+
+                const headerEl = document.createElement('div');
+                headerEl.className = 'player-header';
+
+                const nameEl = document.createElement('div');
+                nameEl.className = 'player-name';
+                nameEl.textContent = p.name;
+                nameEl.title = p.name;
+
+                const editBtn = document.createElement('button');
+                editBtn.className = 'edit-name-btn';
+                editBtn.innerHTML = '✏️';
+                editBtn.title = '名前を変更';
+                editBtn.onclick = () => renamePlayer(p.id);
+
+                headerEl.appendChild(nameEl);
+                headerEl.appendChild(editBtn);
+
+                const cardEl = document.createElement('div');
+                
+                if (roundState === 'WAITING') {
+                    cardEl.className = 'card card-back';
+                } else {
+                    const isRevealed = (roundState === 'FINISHED') || (p.id !== 0);
+                    if (isRevealed && p.card) {
+                        cardEl.className = `card ${p.card.color}`;
+                        cardEl.innerHTML = `
+                            <div class="card-corner">${p.card.suit}<br>${p.card.display}</div>
+                            <div class="card-center">${p.card.suit}</div>
+                            <div class="card-corner" style="transform: rotate(180deg);">${p.card.suit}<br>${p.card.display}</div>
+                        `;
+                    } else {
+                        cardEl.className = 'card card-back';
+                    }
+                }
+
+                const redrawEl = document.createElement('div');
+                redrawEl.className = 'redraw-count';
+                redrawEl.textContent = `残${p.redrawsLeft}回`;
+
+                box.appendChild(headerEl);
+                box.appendChild(cardEl);
+                box.appendChild(redrawEl);
+
+                if (p.id === 0) {
+                    myZone.appendChild(box);
+                } else {
+                    opponentsZone.appendChild(box);
+                }
+            });
+        }
+
+        function handleRedraw() {
+            const me = players[0];
+            if (me.redrawsLeft > 0 && roundState === 'PLAYING') {
+                me.card = drawCard();
+                me.redrawsLeft--;
+                logMessage(`${me.name} がカードを引き直しました。（残り ${me.redrawsLeft} 回）`);
+
+                if (gameMode === 'vs-ai') {
+                    processAITurns();
+                }
+
+                updateUI();
+            }
+        }
+
+        function processAITurns() {
+            for (let i = 1; i < players.length; i++) {
+                const ai = players[i];
+                if (!ai.isHuman && ai.redrawsLeft > 0) {
+                    const visibleCards = players.filter(p => p.id !== ai.id && p.card).map(p => p.card.value);
+                    if (visibleCards.length > 0) {
+                        const avgVisible = visibleCards.reduce((a, b) => a + b, 0) / visibleCards.length;
+                        const chanceToRedraw = avgVisible > 7 ? 0.6 : 0.3;
+
+                        if (Math.random() < chanceToRedraw) {
+                            ai.card = drawCard();
+                            ai.redrawsLeft--;
+                            logMessage(`${ai.name} がカードを引き直しました。`);
+                        }
+                    }
+                }
+            }
+        }
+
+        function handleShowdown() {
+            if (roundState !== 'PLAYING') return;
+
+            if (gameMode === 'vs-ai') {
+                processAITurns();
+            }
+
+            roundState = 'FINISHED';
+            updateUI();
+
+            let minVal = Math.min(...players.map(p => p.card.value));
+            let losers = players.filter(p => p.card.value === minVal);
+
+            losers.forEach(loser => {
+                const box = document.getElementById(`player-box-${loser.id}`);
+                if (box) box.classList.add('is-loser');
+            });
+
+            const loserNames = losers.map(l => l.name).join(' と ');
+            const cardName = losers[0].card.display;
+            
+            let statusText = `【第 ${gameCount} ゲーム結果】敗者: ${loserNames}（最弱カード: ${cardName}）`;
+            if (losers.some(l => l.id === 0)) {
+                statusText += " 😭 あなたの負け！";
+            } else {
+                statusText += " 🎉 生き残りました！";
+            }
+
+            setStatus(statusText);
+            logMessage(`勝負結果: ${statusText}`);
+
+            document.getElementById('redrawBtn').style.display = 'none';
+            document.getElementById('showdownBtn').style.display = 'none';
+            
+            if (isHost) {
+                document.getElementById('nextGameBtn').style.display = 'inline-block';
+            }
+        }
+
+        function setStatus(msg) {
+            document.getElementById('statusMessage').textContent = msg;
+        }
+
+        function logMessage(msg) {
+            const gameLog = document.getElementById('gameLog');
+            const item = document.createElement('div');
+            item.className = 'log-item';
+            item.textContent = `• ${msg}`;
+            gameLog.prepend(item);
+        }
+
+        checkUrlRoom();
+        initGame();
+    </script>
+</body>
+</html>
