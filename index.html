@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>インディアンポーカー (Indian Poker Online)</title>
-    <!-- リアルタイムP2P通信ライブラリ (PeerJS) -->
+    <!-- PeerJS リアルタイムP2P通信ライブラリ -->
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
         :root {
@@ -64,6 +64,7 @@
             gap: 15px;
         }
 
+        /* ルーム＆接続バー */
         .room-bar {
             background: var(--panel-bg);
             border: 1px solid var(--gold);
@@ -128,6 +129,7 @@
         .btn-success { background: linear-gradient(135deg, #2a9d8f, #1d7066); color: #fff; }
         .btn-danger { background: var(--danger); color: #fff; }
 
+        /* テーブル */
         .table {
             background: radial-gradient(circle, var(--table-color) 0%, var(--bg-color) 100%);
             border: 8px solid var(--table-border);
@@ -206,6 +208,7 @@
             cursor: pointer;
             font-size: 0.75rem;
         }
+        .edit-name-btn:hover { color: var(--gold-hover); }
 
         .card {
             width: 60px;
@@ -286,7 +289,7 @@
             <div class="room-info">
                 <span>🏠 ルーム: <b id="roomCodeDisplay">----</b></span>
                 <span id="hostBadge" class="badge badge-host" style="display: none;">👑 ホスト</span>
-                <span id="connStatus" class="badge badge-status">接続準備中...</span>
+                <span id="connStatus" class="badge badge-status">初期化中...</span>
             </div>
             <div class="room-actions">
                 <button class="btn btn-secondary" onclick="createNewRoom()">➕ 新しい部屋を作成</button>
@@ -300,7 +303,7 @@
                 <li>自分のカードだけが見えず、他のプレイヤーのカードが見えています。</li>
                 <li>カードの強さ: <b>A (最弱) &lt; 2 &lt; 3 &lt; ... &lt; Q &lt; K (最強)</b></li>
                 <li>各プレイヤーはラウンド中 <b>最大2回まで</b> 引き直せます。</li>
-                <li>✏️ ボタンを押して名前を変更すると、参加者全員の画面で同期されます！</li>
+                <li>✏️ ボタンを押して名前を変更すると、参加者全員の画面で即座に更新されます！</li>
             </ul>
         </div>
 
@@ -309,7 +312,7 @@
 
             <div class="center-zone">
                 <div class="game-count-badge" id="gameCountBadge">第 1 ゲーム</div>
-                <div class="status-message" id="statusMessage">接続中...</div>
+                <div class="status-message" id="statusMessage">接続準備中...</div>
             </div>
 
             <div class="my-zone" id="myZone"></div>
@@ -346,6 +349,17 @@
             { display: 'K', value: 13 }
         ];
 
+        // ネットワーク貫通力を高めるSTUNサーバー設定
+        const PEER_CONFIG = {
+            config: {
+                iceServers: [
+                    { urls: 'stun:stun.l.google.com:19302' },
+                    { urls: 'stun:stun1.l.google.com:19302' },
+                    { urls: 'stun:stun2.l.google.com:19302' }
+                ]
+            }
+        };
+
         let peer = null;
         let connections = [];
         let hostConn = null;
@@ -359,7 +373,7 @@
         let gameCount = 1;
         const MAX_REDRAWS = 2;
 
-        const PEER_PREFIX = 'indian-poker-v2-room-';
+        const PEER_PREFIX = 'indian-poker-v3-room-';
 
         window.onload = () => {
             const params = new URLSearchParams(window.location.search);
@@ -404,7 +418,7 @@
             document.getElementById('hostBadge').style.display = 'none';
             document.getElementById('connStatus').textContent = 'ホストへ接続中...';
 
-            peer = new Peer();
+            peer = new Peer(PEER_CONFIG);
 
             peer.on('open', (id) => {
                 myId = id;
@@ -414,9 +428,9 @@
                 const timeout = setTimeout(() => {
                     if (!hostConn || !hostConn.open) {
                         document.getElementById('connStatus').textContent = '接続タイムアウト';
-                        logMessage('ホストへの接続に失敗しました。部屋が存在しないか、閉じられています。');
+                        logMessage('ホストへの接続に失敗しました。部屋が存在しないか、ホストのタブが閉じられています。');
                     }
-                }, 8000);
+                }, 10000);
 
                 hostConn.on('open', () => {
                     clearTimeout(timeout);
@@ -439,7 +453,7 @@
         }
 
         function initPeerHost() {
-            peer = new Peer(myId);
+            peer = new Peer(myId, PEER_CONFIG);
 
             peer.on('open', () => {
                 document.getElementById('connStatus').textContent = 'オンライン (ホスト)';
@@ -454,6 +468,7 @@
                 });
 
                 conn.on('close', () => {
+                    connections = connections.filter(c => c !== conn);
                     players = players.filter(p => p.id !== conn.peer);
                     broadcastState('プレイヤーが退出しました。');
                 });
@@ -509,7 +524,9 @@
                 gameCount: gameCount,
                 log: logMsg
             };
-            connections.forEach(c => c.send(payload));
+            connections.forEach(c => {
+                if (c.open) c.send(payload);
+            });
             if (logMsg) logMessage(logMsg);
             updateUI();
         }
@@ -525,7 +542,7 @@
                 me.name = newName.trim();
                 if (isHost) {
                     broadcastState(`${me.name} が名前を変更しました。`);
-                } else if (hostConn) {
+                } else if (hostConn && hostConn.open) {
                     hostConn.send({ type: 'RENAME', newName: me.name });
                 }
                 updateUI();
@@ -580,7 +597,7 @@
                     me.card = drawCard();
                     me.redrawsLeft--;
                     broadcastState(`${me.name} がカードを引き直しました！（残${me.redrawsLeft}回）`);
-                } else if (hostConn) {
+                } else if (hostConn && hostConn.open) {
                     hostConn.send({ type: 'REDRAW' });
                 }
             }
