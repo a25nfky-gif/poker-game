@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>インディアンポーカー (Indian Poker)</title>
-    <!-- PeerJS（無料のリアルタイムP2P通信ライブラリ） -->
+    <title>インディアンポーカー (Indian Poker Online)</title>
+    <!-- リアルタイムP2P通信ライブラリ -->
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
         :root {
@@ -64,6 +64,7 @@
             gap: 15px;
         }
 
+        /* ルーム＆接続状態 */
         .room-bar {
             background: var(--panel-bg);
             border: 1px solid var(--gold);
@@ -128,7 +129,7 @@
         .btn-success { background: linear-gradient(135deg, #2a9d8f, #1d7066); color: #fff; }
         .btn-danger { background: var(--danger); color: #fff; }
 
-        /* ポーカーテーブル */
+        /* テーブルレイアウト */
         .table {
             background: radial-gradient(circle, var(--table-color) 0%, var(--bg-color) 100%);
             border: 8px solid var(--table-border);
@@ -207,6 +208,7 @@
             cursor: pointer;
             font-size: 0.75rem;
         }
+        .edit-name-btn:hover { color: var(--gold-hover); }
 
         .card {
             width: 60px;
@@ -283,12 +285,12 @@
     </header>
 
     <div class="game-container">
-        <!-- ルーム・通信接続バー -->
+        <!-- ルーム・通信管理バー -->
         <div class="room-bar">
             <div class="room-info">
                 <span>🏠 ルーム: <b id="roomCodeDisplay">----</b></span>
                 <span id="hostBadge" class="badge badge-host" style="display: none;">👑 ホスト</span>
-                <span id="connStatus" class="badge badge-status">接続準備中...</span>
+                <span id="connStatus" class="badge badge-status">初期化中...</span>
             </div>
             <div class="room-actions">
                 <button class="btn btn-secondary" onclick="createNewRoom()">➕ 新しい部屋を作成</button>
@@ -296,17 +298,18 @@
             </div>
         </div>
 
-        <!-- ルール確認 -->
+        <!-- ルール -->
         <div class="rules-modal">
-            <h3>📖 ゲームルール (リアルタイム通信中)</h3>
+            <h3>📖 ゲームルール</h3>
             <ul>
-                <li>自分のカードだけが見えず、他の人のカードが見えています。</li>
+                <li>自分のカードだけが見えず、他のプレイヤーのカードが見えています。</li>
                 <li>カードの強さ: <b>A (最弱) &lt; 2 &lt; 3 &lt; ... &lt; Q &lt; K (最強)</b></li>
-                <li>各プレイヤーはラウンド中 <b>最大2回まで</b> 引き直せます。✏️を押せば全員の画面で名前が変わります！</li>
+                <li>各プレイヤーはラウンド中 <b>最大2回まで</b> 引き直せます。</li>
+                <li>✏️ ボタンを押して名前を変更すると、参加者全員の画面で即座に更新されます！</li>
             </ul>
         </div>
 
-        <!-- ポーカーテーブル -->
+        <!-- テーブル -->
         <div class="table">
             <div class="opponents-zone" id="opponentsZone"></div>
 
@@ -318,15 +321,15 @@
             <div class="my-zone" id="myZone"></div>
         </div>
 
-        <!-- アクションボタン -->
+        <!-- 操作ボタン -->
         <div class="controls">
             <button class="btn btn-success" id="startGameBtn" onclick="startGameRound()" style="display: none;">🎮 ゲームを開始（ホスト専用）</button>
             <button class="btn btn-danger" id="redrawBtn" onclick="handleRedraw()" style="display: none;">🔄 引き直す (残2回)</button>
-            <button class="btn" id="showdownBtn" onclick="handleShowdown()" style="display: none;">⚔️ 勝負する！</button>
+            <button class="btn" id="showdownBtn" onclick="handleShowdown()" style="display: none;">⚔️ 勝負する！（ホスト専用）</button>
             <button class="btn btn-success" id="nextGameBtn" onclick="startNextGame()" style="display: none;">🔄 次のゲームへ（ホスト専用）</button>
         </div>
 
-        <!-- 履歴ログ -->
+        <!-- ログ -->
         <div class="log-container">
             <div class="log-title">📋 リアルタイム対戦ログ</div>
             <div id="gameLog"></div>
@@ -336,7 +339,7 @@
     <script>
         const SUITS = ['♠', '♥', '♦', '♣'];
         const RANKS = [
-            { display: 'A', value: 1 },
+            { display: 'A', value: 1 },  // 最弱
             { display: '2', value: 2 },
             { display: '3', value: 3 },
             { display: '4', value: 4 },
@@ -348,53 +351,50 @@
             { display: '10', value: 10 },
             { display: 'J', value: 11 },
             { display: 'Q', value: 12 },
-            { display: 'K', value: 13 }
+            { display: 'K', value: 13 }  // 最強
         ];
 
         let peer = null;
-        let connections = []; // ホストが保持する全ゲストの接続
-        let hostConn = null;  // ゲストが保持するホストとの接続
+        let connections = []; // ホストが持つ接続リスト
+        let hostConn = null;  // ゲストが持つホスト接続
         let myId = '';
         let isHost = false;
         let roomCode = '';
 
         let deck = [];
-        let players = []; // { id, name, card, redrawsLeft }
+        let players = [];
         let roundState = 'WAITING'; // 'WAITING', 'PLAYING', 'FINISHED'
         let gameCount = 1;
         const MAX_REDRAWS = 2;
 
-        // PeerJSのプレフィックス（他アプリとの衝突防止）
         const PEER_PREFIX = 'indian-poker-room-v1-';
 
-        // 初期ロード処理
         window.onload = () => {
             const params = new URLSearchParams(window.location.search);
             const room = params.get('room');
 
             if (room) {
-                // 招待URLから参加（ゲスト）
                 joinRoom(room);
             } else {
-                // 新規部屋作成（ホスト）
                 createNewRoom(false);
             }
         };
 
         // 新規部屋作成 (ホスト)
         function createNewRoom(alertNotice = true) {
+            if (peer) peer.destroy();
             roomCode = Math.floor(1000 + Math.random() * 9000).toString();
             isHost = true;
             myId = PEER_PREFIX + roomCode;
+            connections = [];
 
             document.getElementById('roomCodeDisplay').textContent = `#${roomCode}`;
             document.getElementById('hostBadge').style.display = 'inline-block';
-            document.getElementById('connStatus').textContent = 'ホストとして待機中';
+            document.getElementById('connStatus').textContent = '待機中 (ホスト)';
 
             const newUrl = window.location.pathname + '?room=' + roomCode;
             window.history.pushState({ path: newUrl }, '', newUrl);
 
-            // 自分のプレイヤーを追加
             players = [{ id: myId, name: 'ホスト', card: null, redrawsLeft: MAX_REDRAWS }];
 
             initPeerHost();
@@ -405,8 +405,9 @@
             updateUI();
         }
 
-        // 部屋に参加 (ゲスト)
+        // ゲスト参加
         function joinRoom(code) {
+            if (peer) peer.destroy();
             roomCode = code;
             isHost = false;
             document.getElementById('roomCodeDisplay').textContent = `#${roomCode}`;
@@ -418,32 +419,42 @@
             peer.on('open', (id) => {
                 myId = id;
                 const hostPeerId = PEER_PREFIX + roomCode;
-                hostConn = peer.connect(hostPeerId);
+                hostConn = peer.connect(hostPeerId, { reliable: true });
+
+                const timeout = setTimeout(() => {
+                    if (!hostConn || !hostConn.open) {
+                        document.getElementById('connStatus').textContent = '接続失敗';
+                        logMessage('ホストへの接続に失敗しました。部屋コードを確認してください。');
+                    }
+                }, 6000);
 
                 hostConn.on('open', () => {
+                    clearTimeout(timeout);
                     document.getElementById('connStatus').textContent = 'オンライン';
                     logMessage('ホストに接続しました！');
-                    // ホストに参加通知
                     hostConn.send({ type: 'JOIN', name: 'プレイヤー' });
                 });
 
                 hostConn.on('data', (data) => handleIncomingData(data));
-
                 hostConn.on('close', () => {
-                    document.getElementById('connStatus').textContent = '切断されました';
-                    alert('ホストとの接続が切断されました。');
+                    document.getElementById('connStatus').textContent = '切断';
+                    alert('ホストとの通信が切断されました。');
                 });
+            });
+
+            peer.on('error', (err) => {
+                document.getElementById('connStatus').textContent = '通信エラー';
+                console.error(err);
             });
         }
 
-        // ホスト用Peer初期化
+        // ホストPeer初期化
         function initPeerHost() {
-            if (peer) peer.destroy();
             peer = new Peer(myId);
 
             peer.on('open', () => {
-                document.getElementById('connStatus').textContent = 'オンライン (待機中)';
-                logMessage(`ルーム #${roomCode} を作成しました。ゲストの参加を待っています。`);
+                document.getElementById('connStatus').textContent = 'オンライン (ホスト)';
+                logMessage(`ルーム #${roomCode} を開始しました。参加者を待っています。`);
             });
 
             peer.on('connection', (conn) => {
@@ -455,9 +466,12 @@
 
                 conn.on('close', () => {
                     players = players.filter(p => p.id !== conn.peer);
-                    broadcastState();
-                    logMessage(`プレイヤーが退出しました。`);
+                    broadcastState('プレイヤーが退出しました。');
                 });
+            });
+
+            peer.on('error', (err) => {
+                console.error(err);
             });
         }
 
@@ -467,32 +481,29 @@
                 const newPlayer = {
                     id: conn.peer,
                     name: `${data.name} ${players.length}`,
-                    card: null,
+                    card: (roundState === 'PLAYING') ? drawCard() : null,
                     redrawsLeft: MAX_REDRAWS
                 };
                 players.push(newPlayer);
-                logMessage(`${newPlayer.name} が部屋に参加しました！`);
-                broadcastState();
+                broadcastState(`${newPlayer.name} が参加しました！`);
             } else if (data.type === 'RENAME') {
                 const player = players.find(p => p.id === conn.peer);
                 if (player) {
                     const oldName = player.name;
                     player.name = data.newName;
-                    logMessage(`名前変更: ${oldName} ➔ ${player.name}`);
-                    broadcastState();
+                    broadcastState(`名前変更: ${oldName} ➔ ${player.name}`);
                 }
             } else if (data.type === 'REDRAW') {
                 const player = players.find(p => p.id === conn.peer);
                 if (player && player.redrawsLeft > 0 && roundState === 'PLAYING') {
                     player.card = drawCard();
                     player.redrawsLeft--;
-                    logMessage(`${player.name} がカードを引き直しました！（残${player.redrawsLeft}回）`);
-                    broadcastState();
+                    broadcastState(`${player.name} がカードを引き直しました！（残${player.redrawsLeft}回）`);
                 }
             }
         }
 
-        // ゲストが受信した状態同期の処理
+        // ゲスト受信データ
         function handleIncomingData(data) {
             if (data.type === 'SYNC_STATE') {
                 players = data.players;
@@ -503,7 +514,7 @@
             }
         }
 
-        // ホストが全員へ最新状態を配信 (ブロードキャスト)
+        // 全員へブロードキャスト
         function broadcastState(logMsg = null) {
             const payload = {
                 type: 'SYNC_STATE',
@@ -513,12 +524,13 @@
                 log: logMsg
             };
             connections.forEach(c => c.send(payload));
+            if (logMsg) logMessage(logMsg);
             updateUI();
         }
 
         // 名前変更
         function renamePlayer(id) {
-            if (id !== myId) return; // 自分の名前のみ変更可能
+            if (id !== myId) return;
 
             const me = players.find(p => p.id === myId);
             if (!me) return;
@@ -535,7 +547,6 @@
             }
         }
 
-        // カード・ゲーム処理
         function createDeck() {
             deck = [];
             for (let suit of SUITS) {
@@ -559,7 +570,7 @@
             return deck.pop();
         }
 
-        // ホスト専用: ゲーム開始
+        // ホスト: ゲーム開始
         function startGameRound() {
             if (!isHost) return;
             createDeck();
@@ -570,10 +581,10 @@
                 p.redrawsLeft = MAX_REDRAWS;
             });
 
-            broadcastState(`--- 第 ${gameCount} ゲームが開始されました ---`);
+            broadcastState(`--- 第 ${gameCount} ゲーム開始 ---`);
         }
 
-        // ホスト専用: 次のゲームへ
+        // ホスト: 連戦
         function startNextGame() {
             gameCount++;
             startGameRound();
@@ -593,19 +604,18 @@
             }
         }
 
-        // ホスト専用: 勝負
+        // ホスト: 勝負
         function handleShowdown() {
             if (!isHost || roundState !== 'PLAYING') return;
 
             roundState = 'FINISHED';
 
-            let minVal = Math.min(...players.map(p => p.card.value));
-            let losers = players.filter(p => p.card.value === minVal);
+            let minVal = Math.min(...players.map(p => p.card ? p.card.value : 99));
+            let losers = players.filter(p => p.card && p.card.value === minVal);
             const loserNames = losers.map(l => l.name).join(' と ');
             const cardName = losers[0].card.display;
 
-            const resultLog = `勝負結果: 敗者 ${loserNames} (最弱カード: ${cardName})`;
-            broadcastState(resultLog);
+            broadcastState(`【勝負結果】敗者: ${loserNames} (最弱カード: ${cardName})`);
         }
 
         // UI描画
@@ -624,7 +634,7 @@
 
             const me = players.find(p => p.id === myId);
 
-            // ボタン表示制御
+            // ボタン制御
             if (isHost) {
                 startGameBtn.style.display = (roundState === 'WAITING') ? 'inline-block' : 'none';
                 showdownBtn.style.display = (roundState === 'PLAYING') ? 'inline-block' : 'none';
@@ -643,28 +653,28 @@
                 redrawBtn.style.display = 'none';
             }
 
-            // ステータスメッセージ
+            // メッセージ
             const statusEl = document.getElementById('statusMessage');
             if (roundState === 'WAITING') {
                 statusEl.textContent = isHost ? "「ゲームを開始」を押してください" : "ホストがゲームを開始するのを待っています...";
             } else if (roundState === 'PLAYING') {
-                statusEl.textContent = `【第 ${gameCount} ゲーム】他のプレイヤーのカードを見て推理しましょう！`;
+                statusEl.textContent = `【第 ${gameCount} ゲーム】他のプレイヤーのカードを見て推理！`;
             } else if (roundState === 'FINISHED') {
                 let minVal = Math.min(...players.map(p => p.card ? p.card.value : 99));
                 let losers = players.filter(p => p.card && p.card.value === minVal);
                 let loserNames = losers.map(l => l.name).join(' と ');
-                statusEl.textContent = `ラウンド終了！ 敗者: ${loserNames}`;
+                statusEl.textContent = `結果発表！ 敗者: ${loserNames}`;
             }
 
-            // プレイヤーカード描画
+            // カードレンダリング
             players.forEach((p) => {
                 const isMe = (p.id === myId);
                 const box = document.createElement('div');
                 box.className = `player-card-box ${isMe ? 'is-me' : ''}`;
 
-                if (roundState === 'FINISHED') {
-                    let minVal = Math.min(...players.map(pl => pl.card.value));
-                    if (p.card && p.card.value === minVal) box.classList.add('is-loser');
+                if (roundState === 'FINISHED' && p.card) {
+                    let minVal = Math.min(...players.map(pl => pl.card ? pl.card.value : 99));
+                    if (p.card.value === minVal) box.classList.add('is-loser');
                 }
 
                 const headerEl = document.createElement('div');
@@ -689,7 +699,6 @@
                 if (roundState === 'WAITING' || !p.card) {
                     cardEl.className = 'card card-back';
                 } else {
-                    // 自分のカードは裏面、他人のカードまたは終了時は表面
                     const isRevealed = (roundState === 'FINISHED') || !isMe;
                     if (isRevealed) {
                         cardEl.className = `card ${p.card.color}`;
