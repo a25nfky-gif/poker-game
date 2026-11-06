@@ -4,9 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>インディアンポーカー (Indian Poker Online)</title>
-    <!-- Firebase SDK (リアルタイム通信用) -->
-    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+    <!-- リアルタイムP2P通信ライブラリ (PeerJS) -->
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
         :root {
             --bg-color: #0b1f15;
@@ -287,7 +286,7 @@
             <div class="room-info">
                 <span>🏠 ルーム: <b id="roomCodeDisplay">----</b></span>
                 <span id="hostBadge" class="badge badge-host" style="display: none;">👑 ホスト</span>
-                <span id="connStatus" class="badge badge-status">オンライン</span>
+                <span id="connStatus" class="badge badge-status">接続準備中...</span>
             </div>
             <div class="room-actions">
                 <button class="btn btn-secondary" onclick="createNewRoom()">➕ 新しい部屋を作成</button>
@@ -296,12 +295,12 @@
         </div>
 
         <div class="rules-modal">
-            <h3>📖 ゲームルール (確実な通信中)</h3>
+            <h3>📖 ゲームルール</h3>
             <ul>
-                <li>自分のカードだけが見えず、他の人のカードが見えています。</li>
+                <li>自分のカードだけが見えず、他のプレイヤーのカードが見えています。</li>
                 <li>カードの強さ: <b>A (最弱) &lt; 2 &lt; 3 &lt; ... &lt; Q &lt; K (最強)</b></li>
                 <li>各プレイヤーはラウンド中 <b>最大2回まで</b> 引き直せます。</li>
-                <li>✏️ ボタンで名前を変えると、接続中全員の画面で即座に名前が切り替わります！</li>
+                <li>✏️ ボタンを押して名前を変更すると、参加者全員の画面で同期されます！</li>
             </ul>
         </div>
 
@@ -310,7 +309,7 @@
 
             <div class="center-zone">
                 <div class="game-count-badge" id="gameCountBadge">第 1 ゲーム</div>
-                <div class="status-message" id="statusMessage">部屋に入室中...</div>
+                <div class="status-message" id="statusMessage">接続中...</div>
             </div>
 
             <div class="my-zone" id="myZone"></div>
@@ -330,20 +329,6 @@
     </div>
 
     <script>
-        // デモ用公開データベース設定 (誰でも即座に接続可能)
-        const firebaseConfig = {
-            databaseURL: "https://poker-game-demo-default-rtdb.firebaseio.com"
-        };
-        
-        // フォールバック用のローカルリアルタイム同期処理
-        let db;
-        try {
-            firebase.initializeApp(firebaseConfig);
-            db = firebase.database();
-        } catch (e) {
-            console.log("Firebase Database mode fallback initialized");
-        }
-
         const SUITS = ['♠', '♥', '♦', '♣'];
         const RANKS = [
             { display: 'A', value: 1 },
@@ -361,22 +346,25 @@
             { display: 'K', value: 13 }
         ];
 
-        let roomCode = '';
-        let myId = 'user_' + Math.random().toString(36).substr(2, 9);
+        let peer = null;
+        let connections = [];
+        let hostConn = null;
+        let myId = '';
         let isHost = false;
+        let roomCode = '';
 
-        let gameState = {
-            roundState: 'WAITING', // 'WAITING', 'PLAYING', 'FINISHED'
-            gameCount: 1,
-            players: {},
-            log: []
-        };
-
+        let deck = [];
+        let players = [];
+        let roundState = 'WAITING';
+        let gameCount = 1;
         const MAX_REDRAWS = 2;
+
+        const PEER_PREFIX = 'indian-poker-v2-room-';
 
         window.onload = () => {
             const params = new URLSearchParams(window.location.search);
             const room = params.get('room');
+
             if (room) {
                 joinRoom(room);
             } else {
@@ -385,97 +373,167 @@
         };
 
         function createNewRoom(alertNotice = true) {
+            if (peer) peer.destroy();
             roomCode = Math.floor(1000 + Math.random() * 9000).toString();
             isHost = true;
+            myId = PEER_PREFIX + roomCode;
+            connections = [];
+
             document.getElementById('roomCodeDisplay').textContent = `#${roomCode}`;
             document.getElementById('hostBadge').style.display = 'inline-block';
+            document.getElementById('connStatus').textContent = '待機中 (ホスト)';
 
             const newUrl = window.location.pathname + '?room=' + roomCode;
             window.history.pushState({ path: newUrl }, '', newUrl);
 
-            gameState = {
-                roundState: 'WAITING',
-                gameCount: 1,
-                players: {},
-                log: [`新しいルーム #${roomCode} を作成しました`]
-            };
-            
-            gameState.players[myId] = {
-                id: myId,
-                name: 'ホスト',
-                card: null,
-                redrawsLeft: MAX_REDRAWS
-            };
+            players = [{ id: myId, name: 'ホスト', card: null, redrawsLeft: MAX_REDRAWS }];
 
-            listenToRoom();
-            saveState();
+            initPeerHost();
 
             if (alertNotice) {
-                alert(`新しい部屋を作成しました！\nルームコード: #${roomCode}\nリンクをコピーして友達に送ってください。`);
+                alert(`新しい部屋を作成しました！\nルームコード: #${roomCode}\n「招待リンクをコピー」を押して友達へ送信してください。`);
             }
+            updateUI();
         }
 
         function joinRoom(code) {
+            if (peer) peer.destroy();
             roomCode = code;
             isHost = false;
             document.getElementById('roomCodeDisplay').textContent = `#${roomCode}`;
             document.getElementById('hostBadge').style.display = 'none';
+            document.getElementById('connStatus').textContent = 'ホストへ接続中...';
 
-            listenToRoom();
+            peer = new Peer();
 
-            // 自分を追加
-            setTimeout(() => {
-                if (!gameState.players[myId]) {
-                    gameState.players[myId] = {
-                        id: myId,
-                        name: 'プレイヤー ' + (Object.keys(gameState.players).length + 1),
-                        card: null,
-                        redrawsLeft: MAX_REDRAWS
-                    };
-                    addLog(`${gameState.players[myId].name} が参加しました`);
-                    saveState();
-                }
-            }, 500);
+            peer.on('open', (id) => {
+                myId = id;
+                const hostPeerId = PEER_PREFIX + roomCode;
+                hostConn = peer.connect(hostPeerId, { reliable: true });
+
+                const timeout = setTimeout(() => {
+                    if (!hostConn || !hostConn.open) {
+                        document.getElementById('connStatus').textContent = '接続タイムアウト';
+                        logMessage('ホストへの接続に失敗しました。部屋が存在しないか、閉じられています。');
+                    }
+                }, 8000);
+
+                hostConn.on('open', () => {
+                    clearTimeout(timeout);
+                    document.getElementById('connStatus').textContent = 'オンライン';
+                    logMessage('ホストに接続しました！');
+                    hostConn.send({ type: 'JOIN', name: 'プレイヤー' });
+                });
+
+                hostConn.on('data', (data) => handleIncomingData(data));
+                hostConn.on('close', () => {
+                    document.getElementById('connStatus').textContent = '切断';
+                    alert('ホストとの通信が切断されました。');
+                });
+            });
+
+            peer.on('error', (err) => {
+                document.getElementById('connStatus').textContent = '通信エラー';
+                console.error(err);
+            });
         }
 
-        function listenToRoom() {
-            if (db) {
-                db.ref('rooms/' + roomCode).on('value', (snapshot) => {
-                    const data = snapshot.val();
-                    if (data) {
-                        gameState = data;
-                        if (!gameState.players) gameState.players = {};
-                        updateUI();
-                    }
+        function initPeerHost() {
+            peer = new Peer(myId);
+
+            peer.on('open', () => {
+                document.getElementById('connStatus').textContent = 'オンライン (ホスト)';
+                logMessage(`ルーム #${roomCode} を開始しました。参加者を待っています。`);
+            });
+
+            peer.on('connection', (conn) => {
+                connections.push(conn);
+
+                conn.on('data', (data) => {
+                    handleHostReceivedData(conn, data);
                 });
-            } else {
-                // ローカルストレージベースの代替リアルタイム通信
-                window.addEventListener('storage', (e) => {
-                    if (e.key === 'poker_room_' + roomCode) {
-                        gameState = JSON.parse(e.newValue);
-                        updateUI();
-                    }
+
+                conn.on('close', () => {
+                    players = players.filter(p => p.id !== conn.peer);
+                    broadcastState('プレイヤーが退出しました。');
                 });
+            });
+
+            peer.on('error', (err) => {
+                console.error(err);
+            });
+        }
+
+        function handleHostReceivedData(conn, data) {
+            if (data.type === 'JOIN') {
+                const newPlayer = {
+                    id: conn.peer,
+                    name: `${data.name} ${players.length}`,
+                    card: (roundState === 'PLAYING') ? drawCard() : null,
+                    redrawsLeft: MAX_REDRAWS
+                };
+                players.push(newPlayer);
+                broadcastState(`${newPlayer.name} が参加しました！`);
+            } else if (data.type === 'RENAME') {
+                const player = players.find(p => p.id === conn.peer);
+                if (player) {
+                    const oldName = player.name;
+                    player.name = data.newName;
+                    broadcastState(`名前変更: ${oldName} ➔ ${player.name}`);
+                }
+            } else if (data.type === 'REDRAW') {
+                const player = players.find(p => p.id === conn.peer);
+                if (player && player.redrawsLeft > 0 && roundState === 'PLAYING') {
+                    player.card = drawCard();
+                    player.redrawsLeft--;
+                    broadcastState(`${player.name} がカードを引き直しました！（残${player.redrawsLeft}回）`);
+                }
             }
         }
 
-        function saveState() {
-            if (db) {
-                db.ref('rooms/' + roomCode).set(gameState);
-            } else {
-                localStorage.setItem('poker_room_' + roomCode, JSON.stringify(gameState));
+        function handleIncomingData(data) {
+            if (data.type === 'SYNC_STATE') {
+                players = data.players;
+                roundState = data.roundState;
+                gameCount = data.gameCount;
+                if (data.log) logMessage(data.log);
                 updateUI();
             }
         }
 
-        function addLog(msg) {
-            if (!gameState.log) gameState.log = [];
-            gameState.log.unshift(msg);
-            if (gameState.log.length > 20) gameState.log.pop();
+        function broadcastState(logMsg = null) {
+            const payload = {
+                type: 'SYNC_STATE',
+                players: players,
+                roundState: roundState,
+                gameCount: gameCount,
+                log: logMsg
+            };
+            connections.forEach(c => c.send(payload));
+            if (logMsg) logMessage(logMsg);
+            updateUI();
+        }
+
+        function renamePlayer(id) {
+            if (id !== myId) return;
+
+            const me = players.find(p => p.id === myId);
+            if (!me) return;
+
+            const newName = prompt('新しい名前を入力してください:', me.name);
+            if (newName && newName.trim() !== '') {
+                me.name = newName.trim();
+                if (isHost) {
+                    broadcastState(`${me.name} が名前を変更しました。`);
+                } else if (hostConn) {
+                    hostConn.send({ type: 'RENAME', newName: me.name });
+                }
+                updateUI();
+            }
         }
 
         function createDeck() {
-            let deck = [];
+            deck = [];
             for (let suit of SUITS) {
                 for (let rank of RANKS) {
                     deck.push({
@@ -490,66 +548,55 @@
                 const j = Math.floor(Math.random() * (i + 1));
                 [deck[i], deck[j]] = [deck[j], deck[i]];
             }
-            return deck;
+        }
+
+        function drawCard() {
+            if (deck.length === 0) createDeck();
+            return deck.pop();
         }
 
         function startGameRound() {
             if (!isHost) return;
-            let deck = createDeck();
+            createDeck();
+            roundState = 'PLAYING';
 
-            gameState.roundState = 'PLAYING';
-            Object.keys(gameState.players).forEach(id => {
-                gameState.players[id].card = deck.pop();
-                gameState.players[id].redrawsLeft = MAX_REDRAWS;
+            players.forEach(p => {
+                p.card = drawCard();
+                p.redrawsLeft = MAX_REDRAWS;
             });
 
-            addLog(`--- 第 ${gameState.gameCount} ゲーム開始 ---`);
-            saveState();
+            broadcastState(`--- 第 ${gameCount} ゲーム開始 ---`);
         }
 
         function startNextGame() {
-            if (!isHost) return;
-            gameState.gameCount++;
+            gameCount++;
             startGameRound();
         }
 
         function handleRedraw() {
-            const me = gameState.players[myId];
-            if (me && me.redrawsLeft > 0 && gameState.roundState === 'PLAYING') {
-                let deck = createDeck();
-                me.card = deck.pop();
-                me.redrawsLeft--;
-                addLog(`${me.name} がカードを引き直しました（残${me.redrawsLeft}回）`);
-                saveState();
+            const me = players.find(p => p.id === myId);
+            if (me && me.redrawsLeft > 0 && roundState === 'PLAYING') {
+                if (isHost) {
+                    me.card = drawCard();
+                    me.redrawsLeft--;
+                    broadcastState(`${me.name} がカードを引き直しました！（残${me.redrawsLeft}回）`);
+                } else if (hostConn) {
+                    hostConn.send({ type: 'REDRAW' });
+                }
             }
         }
 
         function handleShowdown() {
-            if (!isHost || gameState.roundState !== 'PLAYING') return;
+            if (!isHost || roundState !== 'PLAYING') return;
 
-            gameState.roundState = 'FINISHED';
-            let playerList = Object.values(gameState.players);
-            let minVal = Math.min(...playerList.map(p => p.card ? p.card.value : 99));
-            let losers = playerList.filter(p => p.card && p.card.value === minVal);
+            roundState = 'FINISHED';
+
+            let minVal = Math.min(...players.map(p => p.card ? p.card.value : 99));
+            let losers = players.filter(p => p.card && p.card.value === minVal);
             const loserNames = losers.map(l => l.name).join(' と ');
             const cardName = losers[0].card.display;
 
-            addLog(`【勝負結果】敗者: ${loserNames} (最弱カード: ${cardName})`);
-            saveState();
-        }
-
-        function renamePlayer(id) {
-            if (id !== myId) return;
-            const me = gameState.players[myId];
-            if (!me) return;
-
-            const newName = prompt('新しい名前を入力してください:', me.name);
-            if (newName && newName.trim() !== '') {
-                const oldName = me.name;
-                me.name = newName.trim();
-                addLog(`名前変更: ${oldName} ➔ ${me.name}`);
-                saveState();
-            }
+            broadcastState(`【勝負結果】敗者: ${loserNames} (最弱カード: ${cardName})`);
         }
 
         function updateUI() {
@@ -563,22 +610,21 @@
             opponentsZone.innerHTML = '';
             myZone.innerHTML = '';
 
-            document.getElementById('gameCountBadge').textContent = `第 ${gameState.gameCount} ゲーム`;
+            document.getElementById('gameCountBadge').textContent = `第 ${gameCount} ゲーム`;
 
-            const playerList = Object.values(gameState.players || {});
-            const me = gameState.players[myId];
+            const me = players.find(p => p.id === myId);
 
             if (isHost) {
-                startGameBtn.style.display = (gameState.roundState === 'WAITING') ? 'inline-block' : 'none';
-                showdownBtn.style.display = (gameState.roundState === 'PLAYING') ? 'inline-block' : 'none';
-                nextGameBtn.style.display = (gameState.roundState === 'FINISHED') ? 'inline-block' : 'none';
+                startGameBtn.style.display = (roundState === 'WAITING') ? 'inline-block' : 'none';
+                showdownBtn.style.display = (roundState === 'PLAYING') ? 'inline-block' : 'none';
+                nextGameBtn.style.display = (roundState === 'FINISHED') ? 'inline-block' : 'none';
             } else {
                 startGameBtn.style.display = 'none';
                 showdownBtn.style.display = 'none';
                 nextGameBtn.style.display = 'none';
             }
 
-            if (me && gameState.roundState === 'PLAYING') {
+            if (me && roundState === 'PLAYING') {
                 redrawBtn.style.display = 'inline-block';
                 redrawBtn.textContent = `🔄 引き直す (残${me.redrawsLeft}回)`;
                 redrawBtn.disabled = me.redrawsLeft <= 0;
@@ -587,24 +633,24 @@
             }
 
             const statusEl = document.getElementById('statusMessage');
-            if (gameState.roundState === 'WAITING') {
+            if (roundState === 'WAITING') {
                 statusEl.textContent = isHost ? "「ゲームを開始」を押してください" : "ホストがゲームを開始するのを待っています...";
-            } else if (gameState.roundState === 'PLAYING') {
-                statusEl.textContent = `【第 ${gameState.gameCount} ゲーム】他プレイヤーのカードを見て推理！`;
-            } else if (gameState.roundState === 'FINISHED') {
-                let minVal = Math.min(...playerList.map(p => p.card ? p.card.value : 99));
-                let losers = playerList.filter(p => p.card && p.card.value === minVal);
+            } else if (roundState === 'PLAYING') {
+                statusEl.textContent = `【第 ${gameCount} ゲーム】他のプレイヤーのカードを見て推理！`;
+            } else if (roundState === 'FINISHED') {
+                let minVal = Math.min(...players.map(p => p.card ? p.card.value : 99));
+                let losers = players.filter(p => p.card && p.card.value === minVal);
                 let loserNames = losers.map(l => l.name).join(' と ');
                 statusEl.textContent = `結果発表！ 敗者: ${loserNames}`;
             }
 
-            playerList.forEach((p) => {
+            players.forEach((p) => {
                 const isMe = (p.id === myId);
                 const box = document.createElement('div');
                 box.className = `player-card-box ${isMe ? 'is-me' : ''}`;
 
-                if (gameState.roundState === 'FINISHED' && p.card) {
-                    let minVal = Math.min(...playerList.map(pl => pl.card ? pl.card.value : 99));
+                if (roundState === 'FINISHED' && p.card) {
+                    let minVal = Math.min(...players.map(pl => pl.card ? pl.card.value : 99));
                     if (p.card.value === minVal) box.classList.add('is-loser');
                 }
 
@@ -614,6 +660,7 @@
                 const nameEl = document.createElement('div');
                 nameEl.className = 'player-name';
                 nameEl.textContent = p.name;
+                nameEl.title = p.name;
 
                 headerEl.appendChild(nameEl);
 
@@ -626,10 +673,10 @@
                 }
 
                 const cardEl = document.createElement('div');
-                if (gameState.roundState === 'WAITING' || !p.card) {
+                if (roundState === 'WAITING' || !p.card) {
                     cardEl.className = 'card card-back';
                 } else {
-                    const isRevealed = (gameState.roundState === 'FINISHED') || !isMe;
+                    const isRevealed = (roundState === 'FINISHED') || !isMe;
                     if (isRevealed) {
                         cardEl.className = `card ${p.card.color}`;
                         cardEl.innerHTML = `
@@ -656,16 +703,6 @@
                     opponentsZone.appendChild(box);
                 }
             });
-
-            // ログの更新
-            const gameLog = document.getElementById('gameLog');
-            gameLog.innerHTML = '';
-            (gameState.log || []).forEach(logMsg => {
-                const item = document.createElement('div');
-                item.className = 'log-item';
-                item.textContent = `• ${logMsg}`;
-                gameLog.appendChild(item);
-            });
         }
 
         function copyInviteLink() {
@@ -675,6 +712,15 @@
             }).catch(() => {
                 prompt("以下のリンクをコピーして共有してください:", url);
             });
+        }
+
+        function logMessage(msg) {
+            if (!msg) return;
+            const gameLog = document.getElementById('gameLog');
+            const item = document.createElement('div');
+            item.className = 'log-item';
+            item.textContent = `• ${msg}`;
+            gameLog.prepend(item);
         }
     </script>
 </body>
