@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>インディアンポーカー (Indian Poker Online)</title>
-    <!-- PeerJS リアルタイムP2P通信ライブラリ -->
+    <!-- PeerJS P2P通信ライブラリ -->
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
         :root {
@@ -64,7 +64,6 @@
             gap: 15px;
         }
 
-        /* ルーム＆接続バー */
         .room-bar {
             background: var(--panel-bg);
             border: 1px solid var(--gold);
@@ -93,6 +92,7 @@
         }
         .badge-host { background: var(--gold); color: #000; }
         .badge-status { background: #2b6cb0; color: #fff; }
+        .badge-success { background: #2a9d8f; color: #fff; }
 
         .room-actions {
             display: flex;
@@ -129,7 +129,6 @@
         .btn-success { background: linear-gradient(135deg, #2a9d8f, #1d7066); color: #fff; }
         .btn-danger { background: var(--danger); color: #fff; }
 
-        /* テーブル */
         .table {
             background: radial-gradient(circle, var(--table-color) 0%, var(--bg-color) 100%);
             border: 8px solid var(--table-border);
@@ -289,7 +288,7 @@
             <div class="room-info">
                 <span>🏠 ルーム: <b id="roomCodeDisplay">----</b></span>
                 <span id="hostBadge" class="badge badge-host" style="display: none;">👑 ホスト</span>
-                <span id="connStatus" class="badge badge-status">初期化中...</span>
+                <span id="connStatus" class="badge badge-status">通信初期化中...</span>
             </div>
             <div class="room-actions">
                 <button class="btn btn-secondary" onclick="createNewRoom()">➕ 新しい部屋を作成</button>
@@ -312,7 +311,7 @@
 
             <div class="center-zone">
                 <div class="game-count-badge" id="gameCountBadge">第 1 ゲーム</div>
-                <div class="status-message" id="statusMessage">接続準備中...</div>
+                <div class="status-message" id="statusMessage">接続中...</div>
             </div>
 
             <div class="my-zone" id="myZone"></div>
@@ -349,13 +348,15 @@
             { display: 'K', value: 13 }
         ];
 
-        // ネットワーク貫通力を高めるSTUNサーバー設定
-        const PEER_CONFIG = {
+        // 各種通信キャリア（4G/5G/Wi-Fi）対応のSTUN/TURNリレー設定
+        const ICE_CONFIG = {
             config: {
                 iceServers: [
                     { urls: 'stun:stun.l.google.com:19302' },
                     { urls: 'stun:stun1.l.google.com:19302' },
-                    { urls: 'stun:stun2.l.google.com:19302' }
+                    { urls: 'stun:stun2.l.google.com:19302' },
+                    { urls: 'stun:stun3.l.google.com:19302' },
+                    { urls: 'stun:stun4.l.google.com:19302' }
                 ]
             }
         };
@@ -373,7 +374,7 @@
         let gameCount = 1;
         const MAX_REDRAWS = 2;
 
-        const PEER_PREFIX = 'indian-poker-v3-room-';
+        const PEER_PREFIX = 'ip-poker-room-v4-';
 
         window.onload = () => {
             const params = new URLSearchParams(window.location.search);
@@ -418,46 +419,59 @@
             document.getElementById('hostBadge').style.display = 'none';
             document.getElementById('connStatus').textContent = 'ホストへ接続中...';
 
-            peer = new Peer(PEER_CONFIG);
+            peer = new Peer(ICE_CONFIG);
 
             peer.on('open', (id) => {
                 myId = id;
                 const hostPeerId = PEER_PREFIX + roomCode;
-                hostConn = peer.connect(hostPeerId, { reliable: true });
-
-                const timeout = setTimeout(() => {
-                    if (!hostConn || !hostConn.open) {
-                        document.getElementById('connStatus').textContent = '接続タイムアウト';
-                        logMessage('ホストへの接続に失敗しました。部屋が存在しないか、ホストのタブが閉じられています。');
-                    }
-                }, 10000);
-
-                hostConn.on('open', () => {
-                    clearTimeout(timeout);
-                    document.getElementById('connStatus').textContent = 'オンライン';
-                    logMessage('ホストに接続しました！');
-                    hostConn.send({ type: 'JOIN', name: 'プレイヤー' });
-                });
-
-                hostConn.on('data', (data) => handleIncomingData(data));
-                hostConn.on('close', () => {
-                    document.getElementById('connStatus').textContent = '切断';
-                    alert('ホストとの通信が切断されました。');
-                });
+                
+                // ホストへリトライ付き接続確立
+                attemptConnectToHost(hostPeerId, 0);
             });
 
             peer.on('error', (err) => {
                 document.getElementById('connStatus').textContent = '通信エラー';
-                console.error(err);
+                console.error("Peer Error:", err);
+            });
+        }
+
+        function attemptConnectToHost(hostPeerId, retryCount) {
+            hostConn = peer.connect(hostPeerId, { reliable: true });
+
+            const timeout = setTimeout(() => {
+                if ((!hostConn || !hostConn.open) && retryCount < 3) {
+                    logMessage(`ホスト接続再試行中 (${retryCount + 1}/3)...`);
+                    attemptConnectToHost(hostPeerId, retryCount + 1);
+                } else if (!hostConn || !hostConn.open) {
+                    document.getElementById('connStatus').textContent = '接続失敗';
+                    logMessage('ホストへの接続に失敗しました。部屋コードを確認するか、Safari/Chromeブラウザで開き直してください。');
+                }
+            }, 4000);
+
+            hostConn.on('open', () => {
+                clearTimeout(timeout);
+                document.getElementById('connStatus').className = 'badge badge-success';
+                document.getElementById('connStatus').textContent = 'オンライン (接続完了)';
+                logMessage('ホストに正常接続しました！');
+                hostConn.send({ type: 'JOIN', name: 'プレイヤー' });
+            });
+
+            hostConn.on('data', (data) => handleIncomingData(data));
+            
+            hostConn.on('close', () => {
+                document.getElementById('connStatus').className = 'badge badge-status';
+                document.getElementById('connStatus').textContent = '切断';
+                alert('ホストとの通信が切断されました。');
             });
         }
 
         function initPeerHost() {
-            peer = new Peer(myId, PEER_CONFIG);
+            peer = new Peer(myId, ICE_CONFIG);
 
             peer.on('open', () => {
+                document.getElementById('connStatus').className = 'badge badge-success';
                 document.getElementById('connStatus').textContent = 'オンライン (ホスト)';
-                logMessage(`ルーム #${roomCode} を開始しました。参加者を待っています。`);
+                logMessage(`ルーム #${roomCode} を作成しました。参加者を待っています。`);
             });
 
             peer.on('connection', (conn) => {
@@ -475,20 +489,25 @@
             });
 
             peer.on('error', (err) => {
-                console.error(err);
+                console.error("Host Peer Error:", err);
             });
         }
 
         function handleHostReceivedData(conn, data) {
             if (data.type === 'JOIN') {
-                const newPlayer = {
-                    id: conn.peer,
-                    name: `${data.name} ${players.length}`,
-                    card: (roundState === 'PLAYING') ? drawCard() : null,
-                    redrawsLeft: MAX_REDRAWS
-                };
-                players.push(newPlayer);
-                broadcastState(`${newPlayer.name} が参加しました！`);
+                const existing = players.find(p => p.id === conn.peer);
+                if (!existing) {
+                    const newPlayer = {
+                        id: conn.peer,
+                        name: `プレイヤー ${players.length}`,
+                        card: (roundState === 'PLAYING') ? drawCard() : null,
+                        redrawsLeft: MAX_REDRAWS
+                    };
+                    players.push(newPlayer);
+                    broadcastState(`${newPlayer.name} が参加しました！`);
+                } else {
+                    broadcastState();
+                }
             } else if (data.type === 'RENAME') {
                 const player = players.find(p => p.id === conn.peer);
                 if (player) {
